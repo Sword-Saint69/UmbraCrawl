@@ -1,0 +1,21 @@
+# vendor survey clones (reference only, never commit)
+D4Vinci-Scrapling/
+apify-crawlee/
+apify-crawlee-python/
+scrapy-scrapy/
+gocolly-colly/
+daijro-camoufox/
+Kaliiiiiiiiii-Vinyzu-patchright/
+ultrafunkamsterdam-undetected-chromedriver/
+unclecode-crawl4ai/
+mendableai-firecrawl/
+# latex build noise
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+# autopush log
+.autopush.log

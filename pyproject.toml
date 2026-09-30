@@ -1,0 +1,16 @@
+[project]
+name = "umbracrawl"
+version = "0.1.0"
+description = "Local-first stealth research crawler. SQLite-backed, 4 workers, uncapped deep crawl."
+requires-python = ">=3.10"
+dependencies = ["curl_cffi>=0.7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["umbracrawl*"]
