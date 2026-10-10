@@ -1,7 +1,8 @@
-"""Counters + alert evaluation. Local file, no server."""
+"""Counters + alert evaluation. Local file, no server. Thread-safe."""
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 CHALLENGE_ALERT_RATE = 0.25
@@ -18,24 +19,30 @@ class Metrics:
         self.poisoned = 0
         self.started = time.time()
         self._buf: list[str] = []
+        self._lock = threading.Lock()
 
     def event(self, kind: str, **fields) -> None:
-        self.requests += kind == "fetch"
-        self.challenges += kind == "challenge"
-        self.pages += kind == "page"
-        self.escalated += kind == "escalated"
-        self.poisoned += kind == "poison"
-        if self.path:
-            self._buf.append(json.dumps({"t": time.time(), "k": kind,
-                                         **fields}))
-            if len(self._buf) >= 50:
-                self.flush()
+        with self._lock:
+            self.requests += kind == "fetch"
+            self.challenges += kind == "challenge"
+            self.pages += kind == "page"
+            self.escalated += kind == "escalated"
+            self.poisoned += kind == "poison"
+            if self.path:
+                self._buf.append(json.dumps({"t": time.time(), "k": kind,
+                                             **fields}))
+                if len(self._buf) >= 50:
+                    self._write_locked()
+
+    def _write_locked(self) -> None:
+        with open(self.path, "a") as f:
+            f.write("\n".join(self._buf) + "\n")
+        self._buf = []
 
     def flush(self) -> None:
-        if self.path and self._buf:
-            with open(self.path, "a") as f:
-                f.write("\n".join(self._buf) + "\n")
-            self._buf = []
+        with self._lock:
+            if self.path and self._buf:
+                self._write_locked()
 
     def summary(self) -> dict:
         elapsed = max(time.time() - self.started, 1e-3)

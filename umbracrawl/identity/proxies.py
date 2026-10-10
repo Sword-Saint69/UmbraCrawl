@@ -20,6 +20,10 @@ class ProxyPool:
     def _healthy(self, p: str) -> bool:
         return self._cool_until.get(p, 0.0) <= time.time()
 
+    def release(self, session_id: str) -> None:
+        with self._lock:
+            self._sticky.pop(session_id, None)
+
     def checkout(self, session_id: str) -> str | None:
         if not self.proxies:
             return None  # direct connection

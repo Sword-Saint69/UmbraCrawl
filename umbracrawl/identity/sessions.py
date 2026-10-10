@@ -52,6 +52,9 @@ class SessionPool:
 
     def checkout(self, commit: bool = True) -> Session:
         with self._lock:
+            self.con.execute(
+                "DELETE FROM sessions WHERE alive=0 AND created < ?",
+                (time.time() - 3600,))
             r = self.con.execute(
                 "SELECT sid FROM sessions WHERE alive=1"
                 " ORDER BY uses ASC, created ASC LIMIT 1").fetchone()

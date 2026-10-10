@@ -20,11 +20,14 @@ class Gate:
 
     def wait(self, url: str) -> None:
         host = urlparse(url).hostname or ""
-        with self._for(host):
-            due = self._last.get(host, 0.0) + self.min_delay - time.time()
-            if due > 0:
-                time.sleep(due)
-            self._last[host] = time.time()
+        while True:
+            with self._for(host):
+                due = self._last.get(host, 0.0) + self.min_delay \
+                    - time.time()
+                if due <= 0:
+                    self._last[host] = time.time()
+                    return
+            time.sleep(due)
 
 
 def can_fetch(url: str, ua: str = "UmbraCrawl/0.1", timeout: float = 10) -> bool:
