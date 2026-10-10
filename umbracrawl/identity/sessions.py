@@ -35,10 +35,9 @@ class Session:
 
 
 class SessionPool:
-    def __init__(self, con: sqlite3.Connection, size: int = 4,
+    def __init__(self, con: sqlite3.Connection,
                  max_challenges: int = MAX_CHALLENGES) -> None:
         self.con = con
-        self.size = size
         self.max_challenges = max_challenges
         self._lock = threading.RLock()
         con.executescript(SCHEMA)

@@ -41,7 +41,7 @@ class BrowserSlot:
             return self._real_fetch(url, profile, proxy, t0)
 
     def _real_fetch(self, url: str, profile: dict | None,
-                    proxy: dict | None, t0: float) -> dict:
+                    proxy: str | None, t0: float) -> dict:
         profile = profile or {}
         kw: dict = {"headless": True}
         if proxy:
