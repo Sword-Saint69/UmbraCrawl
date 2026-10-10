@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS tasks(
   depth INTEGER NOT NULL DEFAULT 0,
   priority REAL NOT NULL DEFAULT 0,
   attempts INTEGER NOT NULL DEFAULT 0,
+  challenges INTEGER NOT NULL DEFAULT 0,
+  note TEXT DEFAULT '',
   added_at REAL NOT NULL,
   leased_at REAL
 );
@@ -47,6 +49,12 @@ def connect(path: str) -> sqlite3.Connection:
     con = sqlite3.connect(path, check_same_thread=False)
     con.execute("PRAGMA journal_mode=WAL;")
     con.executescript(SCHEMA)
+    for col, decl in (("challenges", "INTEGER NOT NULL DEFAULT 0"),
+                      ("note", "TEXT DEFAULT ''")):
+        try:
+            con.execute(f"ALTER TABLE tasks ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError:
+            pass  # column already present (pre-v0.3 database)
     try:
         con.executescript(FTS)
         con.execute("INSERT OR IGNORE INTO kv(k,v) VALUES('fts','1')")
@@ -75,19 +83,24 @@ def enqueue(con: sqlite3.Connection, rows: list[tuple[str, str, int, float]]) ->
 def lease(con: sqlite3.Connection, limit: int, lease_sec: int = 300) -> list[tuple]:
     now = time.time()
     cur = con.execute(
-        "SELECT id,url,depth,attempts FROM tasks WHERE status='queued'"
+        "SELECT id,url,depth,attempts,challenges FROM tasks"
+        " WHERE status='queued'"
         " OR (status='leased' AND leased_at < ?) "
         "ORDER BY priority DESC, depth ASC LIMIT ?",
         (now - lease_sec, limit),
     )
     tasks = cur.fetchall()
-    for (tid, _, _, _) in tasks:
+    for (tid, _, _, _, _) in tasks:
         con.execute(
             "UPDATE tasks SET status='leased', leased_at=?, attempts=attempts+1"
             " WHERE id=?", (now, tid),
         )
     con.commit()
-    return tasks
+    cur = con.execute(
+        "SELECT id,url,depth,attempts,challenges FROM tasks WHERE id IN (%s)"
+        % ",".join("?" * len(tasks)), [t[0] for t in tasks],
+    ) if tasks else []
+    return cur.fetchall() if tasks else []
 
 
 def mark(con: sqlite3.Connection, tid: int, status: str) -> None:

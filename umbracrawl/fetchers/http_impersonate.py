@@ -52,9 +52,12 @@ def fetch(url: str, timeout: int = 30, cookies: dict | None = None,
     if cookies:
         opener.addheaders.append(("Cookie", "; ".join(
             f"{k}={v}" for k, v in cookies.items())))
-    with opener.open(req, timeout=timeout) as r:
-        body = r.read().decode("utf-8", "replace")
-    return {"status": r.status, "text": body, "headers": {}, "cookies": {},
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            status, body = r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        status, body = e.code, e.read().decode("utf-8", "replace")
+    return {"status": status, "text": body, "headers": {}, "cookies": {},
             "ms": int((time.time() - t0) * 1000), "backend": "urllib"}
 
 
