@@ -1,4 +1,4 @@
-"""Stdlib page extractor: title, text, outlinks. v0.4 grows this."""
+"""Stdlib page extractor: title, text, outlinks."""
 from __future__ import annotations
 
 from html.parser import HTMLParser
