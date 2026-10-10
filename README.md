@@ -4,31 +4,64 @@ Local-first research crawler. You type `research a book`, it crawls the full
 result frontier and answers from a local SQLite store. 4 workers, no page cap,
 no servers. Stable release: 55 tests green, docs in `docs/`.
 
-<p align="center">
-  <video src="docs/brag.mp4" poster="docs/brag.jpg" width="720" controls muted playsinline></video>
-</p>
-<p align="center"><sub>46-second cinematic reel with narration — typed prompt, frontier crawl, browser escalation chain, identity gate, adaptive parse, bm25-ranked answer from the local store, OpenCode tool call. Made with the <a href="https://github.com/latent-spaces/brag">/brag</a> skill.</sub></p>
-
 ## Install
 
-From the repo root:
+Quick path:
+
+```bash
+./install.sh              # venv + package + check
+./install.sh --dev        # + test deps and pytest run
+./install.sh --skill      # + agent skill for OpenCode and Claude Code
+```
+
+Manual steps (same thing, spelled out):
+
+Step 1 — Prerequisites: Python 3.10 or newer, `pip`, and `venv`.
+
+```bash
+python3 --version   # must be >= 3.10
+```
+
+Step 2 — Create the venv:
 
 ```bash
 python3 -m venv ~/.local/share/umbracrawl/venv
+```
+
+Step 3 — Install the package (editable, from the repo root):
+
+```bash
 ~/.local/share/umbracrawl/venv/bin/pip install -e .
 ```
 
 Pulls `curl_cffi`, `lxml`, `pyyaml`, and `cssselect`. The browser slots import
 lazily, so nothing needs a browser binary to install or to crawl over HTTP.
-Run it with the venv interpreter:
+
+Step 4 — Verify the install:
 
 ```bash
 ~/.local/share/umbracrawl/venv/bin/python -m umbracrawl --help
+```
+
+Step 5 — Run your first query:
+
+```bash
 # or, after `source ~/.local/share/umbracrawl/venv/bin/activate`:
 python -m umbracrawl "research a book Dune by Frank Herbert"
 ```
 
-Tests (adds the pytest dev extra):
+Step 6 — Install the skill (repo ships `skills/umbracrawl-research/SKILL.md`):
+
+```bash
+# OpenCode:
+mkdir -p ~/.config/opencode/skills
+cp -r skills/umbracrawl-research ~/.config/opencode/skills/
+# Claude Code:
+mkdir -p ~/.claude/skills
+cp -r skills/umbracrawl-research ~/.claude/skills/
+```
+
+Step 7 — Run the test suite (optional, adds the pytest dev extra):
 
 ```bash
 ~/.local/share/umbracrawl/venv/bin/pip install -e ".[dev]"
