@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="re-crawl even if rows exist")
     args = ap.parse_args(argv)
     query = prompt.to_query(" ".join(args.prompt))
-    stats = run.research(query, args.db, args.workers)
+    stats = run.research(query, args.db, args.workers, fresh=args.fresh)
     print(answer.compose(query, args.db))
     print(f"\n[crawled={stats['pages']} blocked={stats['blocked']}]",
           file=sys.stderr)

@@ -44,10 +44,29 @@ def test_profile_consistent():
 def test_leak_gate():
     good = {"webdriver": None, "cdp_keys": [],
             "webgl_renderer": "X", "profile_renderer": "X",
-            "headers": ["Host", "User-Agent", "Accept", "Accept-Language"]}
+            "headers": ["Sec-CH-UA", "Upgrade-Insecure-Requests",
+                        "User-Agent", "Accept", "Accept-Language"]}
     assert leakcheck.gate(good) is True
     bad = dict(good, webdriver=True, cdp_keys=["cdc_foo"],
                webgl_renderer="Y")
     assert leakcheck.gate(bad) is False
     assert set(leakcheck.evaluate(good)) == {
         "check_webdriver", "check_cdp", "check_webgl", "check_headers"}
+
+
+def test_header_order_bad():
+    env = {"webdriver": None, "cdp_keys": [],
+           "webgl_renderer": "X", "profile_renderer": "X",
+           "headers": ["Accept", "User-Agent", "Sec-CH-UA"]}
+    ok, reason = leakcheck.check_headers(env)
+    assert ok is False and reason == "header-order-bad"
+
+
+def test_built_profile_passes_gate():
+    import random
+    from umbracrawl.identity import fingerprints
+    p = fingerprints.pick_profile(random.Random(3))
+    env = {"webdriver": None, "cdp_keys": [],
+           "webgl_renderer": p["webgl"], "profile_renderer": p["webgl"],
+           "headers": list(fingerprints.headers_for(p))}
+    assert leakcheck.gate(env) is True
