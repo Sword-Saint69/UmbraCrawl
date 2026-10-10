@@ -67,13 +67,14 @@ def test_budgets_stop_loop(tmp_path):
     search.search_links = lambda q: ["https://loop.example/0"]
     try:
         db = str(tmp_path / "u.db")
-        s1 = run_mod.research("loop", db, max_workers=4, max_pages=3)
+        s1 = run_mod.research("loop", db, max_workers=4, max_pages=3,
+                              politeness_delay=0.05)
         assert s1["pages"] == 3  # no batch overshoot
         s2 = run_mod.research("loop", str(tmp_path / "v.db"), max_workers=1,
-                              max_depth=0, timeout=60)
+                              max_depth=0, timeout=3, politeness_delay=0.05)
         assert s2["pages"] >= 1
         s3 = run_mod.research("loop", str(tmp_path / "w.db"), max_workers=1,
-                              max_depth=1)
+                              max_depth=1, politeness_delay=0.05)
         depths = True
         con = store.connect(str(tmp_path / "w.db"))
         depths = con.execute("SELECT MAX(depth) FROM tasks").fetchone()[0]

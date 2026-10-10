@@ -140,19 +140,21 @@ def _crawl_one(args: tuple) -> dict:
 def research(query: str, db_path: str, max_workers: int = WORKERS,
              fetcher=None, proxy_list: list[str] | None = None,
              browser_slot=None, fresh: bool = False, max_pages: int = 0,
-             max_depth: int = 0, timeout: int = 0) -> dict:
+             max_depth: int = 0, timeout: int = 0,
+             politeness_delay: float = 2.0) -> dict:
     con = storage.connect(db_path)
     try:
         return _run(query, con, max_workers, proxy_list, browser_slot,
-                    fresh, db_path, max_pages, max_depth, timeout)
+                    fresh, db_path, max_pages, max_depth, timeout,
+                    politeness_delay)
     finally:
         con.close()
 
 
 def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
          fresh: bool, db_path: str, max_pages: int, max_depth: int,
-         timeout: int) -> dict:
-    gate = politeness.Gate()
+         timeout: int, politeness_delay: float) -> dict:
+    gate = politeness.Gate(min_delay=politeness_delay)
     pool = sessions.SessionPool(con)
     px = proxies.ProxyPool(proxy_list)
     profile = fingerprints.pick_profile()
