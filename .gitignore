@@ -19,3 +19,6 @@ mendableai-firecrawl/
 *.synctex.gz
 # autopush log
 .autopush.log
+__pycache__/
+*.pyc
+.venv/
