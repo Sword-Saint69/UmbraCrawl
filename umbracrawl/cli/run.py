@@ -8,6 +8,7 @@ from .. import extract as _extract
 from .. import search as _search
 from .. import storage
 from ..fetchers import http_impersonate as _http
+from ..identity import fingerprints, leakcheck, proxies, sessions
 from ..scheduler import politeness, queue
 
 WORKERS = 4
@@ -26,10 +27,11 @@ def in_scope(query: str, url: str, title: str = "") -> bool:
 
 
 def _crawl_one(args: tuple) -> dict:
-    tid, url, depth, gate = args
+    tid, url, depth, gate, ident = args
     gate.wait(url)
     try:
-        res = _http.fetch(url)
+        res = _http.fetch(url, cookies=ident["cookies"],
+                          proxy=ident["proxy"], headers=ident["headers"])
     except Exception as e:
         return {"tid": tid, "ok": False, "error": str(e)[:120]}
     blocked, reason = _http.is_challenge(res["status"], res["text"])
@@ -39,13 +41,23 @@ def _crawl_one(args: tuple) -> dict:
         page = _extract.extract(url, res["text"])
     except Exception as e:
         return {"tid": tid, "ok": False, "error": f"parse:{e}"[:120]}
-    return {"tid": tid, "ok": True, "page": page}
+    return {"tid": tid, "ok": True, "page": page,
+            "cookies": res.get("cookies", {})}
 
 
 def research(query: str, db_path: str, max_workers: int = WORKERS,
-             fetcher=None) -> dict:
+             fetcher=None, proxy_list: list[str] | None = None) -> dict:
     con = storage.connect(db_path)
     gate = politeness.Gate()
+    pool = sessions.SessionPool(con)
+    px = proxies.ProxyPool(proxy_list)
+    profile = fingerprints.pick_profile()
+    headers = fingerprints.headers_for(profile)
+    env = {"webdriver": None, "cdp_keys": [],
+           "webgl_renderer": profile["webgl"],
+           "profile_renderer": profile["webgl"],
+           "headers": list(headers)}
+    assert leakcheck.gate(env), "identity failed leak gate"
     seeds = _search.search_links(query)
     queue.add_urls(con, seeds, 0, storage)
     pages = blocked = 0
@@ -54,10 +66,18 @@ def research(query: str, db_path: str, max_workers: int = WORKERS,
             batch = storage.lease(con, max_workers)
             if not batch:
                 break
-            args = [(t[0], t[1], t[2], gate) for t in batch]
-            for out in ex.map(_crawl_one, args):
+            args = []
+            for (t0, url, depth, _) in batch:
+                ses = pool.checkout()
+                ident = {"cookies": ses.cookies,
+                         "proxy": px.checkout(ses.sid), "headers": headers,
+                         "sid": ses.sid}
+                args.append((t0, url, depth, gate, ident))
+            for out, (_, url, _, _, ident) in zip(ex.map(_crawl_one, args), args):
+                px.report(ident["proxy"], out["ok"])
                 if out["ok"]:
                     p = out["page"]
+                    pool.save_cookies(ident["sid"], out["cookies"])
                     meta = {"description": p["description"]}
                     storage.store_item(con, p["url"], p["title"], p["text"], meta)
                     storage.mark(con, out["tid"], "done")
@@ -69,9 +89,11 @@ def research(query: str, db_path: str, max_workers: int = WORKERS,
                     queue.add_urls(con, kids, depth + 1, storage)
                     pages += 1
                 else:
-                    status = ("poison" if out["error"].startswith("challenge")
-                              else "failed")
-                    storage.mark(con, out["tid"], status)
-                    blocked += (status == "poison")
+                    if out["error"].startswith("challenge"):
+                        pool.note_challenge(ident["sid"])
+                        storage.mark(con, out["tid"], "poison")
+                        blocked += 1
+                    else:
+                        storage.mark(con, out["tid"], "failed")
     con.close()
     return {"query": query, "pages": pages, "blocked": blocked, "db": db_path}
