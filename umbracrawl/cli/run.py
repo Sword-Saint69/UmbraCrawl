@@ -66,7 +66,9 @@ def in_scope(query: str, url: str, title: str = "") -> bool:
     if not toks:
         return True
     hay = f"{url} {title}".lower()
-    return any(t in hay for t in toks)
+    hits = sum(1 for t in toks if t in hay)
+    need = max(1, -(-len(toks) * 6 // 10))  # ceil(60% of tokens)
+    return hits >= need
 
 
 def _crawl_one(args: tuple) -> dict:
@@ -77,6 +79,10 @@ def _crawl_one(args: tuple) -> dict:
         res = _http.fetch(url, cookies=ident["cookies"],
                           proxy=ident["proxy"], headers=ident["headers"])
     except Exception as e:
+        if _http.is_transient(e) and attempts < _http.MAX_TRANSIENT_TRIES:
+            time.sleep(min(2 ** max(attempts - 1, 0), 8))
+            return {"tid": tid, "ok": False, "error": f"transient:{e}"[:120],
+                    "retry": True}
         return {"tid": tid, "ok": False, "error": str(e)[:120]}
     status, text = res.get("status", 0), res.get("text", "")
     blocked, reason = _http.is_challenge(status, text)
@@ -86,6 +92,9 @@ def _crawl_one(args: tuple) -> dict:
         if decision == "http":
             return {"tid": tid, "ok": False, "challenge": True,
                     "error": f"challenge:{reason}", "retry": True}
+        if decision == "poison":
+            return {"tid": tid, "ok": False, "challenge": True,
+                    "error": f"challenge:{reason}"}
         if decision == "browser":
             seen_backend = False
             for slot in slots:
@@ -176,12 +185,13 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                 break
             if deadline and time.time() >= deadline:
                 break
-            batch = storage.lease(con, max_workers)
+            batch = storage.lease(con, max_workers, commit=False)
             if not batch:
+                con.commit()
                 break
             args = []
             for (t0, url, depth, attempts, challenges) in batch:
-                ses = pool.checkout()
+                ses = pool.checkout(commit=False)
                 ident = {"cookies": ses.cookies,
                          "proxy": px.checkout(ses.sid), "headers": headers,
                          "profile": profile, "sid": ses.sid}
@@ -192,29 +202,30 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                 px.report(ident["proxy"], out["ok"])
                 if out["ok"]:
                     p = out["page"]
-                    pool.save_cookies(ident["sid"], out["cookies"])
+                    pool.save_cookies(ident["sid"], out["cookies"],
+                                      commit=False)
                     meta = {"description": p["description"],
                             "fields": p.get("fields", {}),
                             "markdown": p.get("markdown", "")}
                     if HAVE_PARSER and p.get("missing"):
                         _relearn.snapshot(con, p["url"], p.get("html", ""),
-                                          p["missing"])
-                    storage.store_item(con, p["url"], p["title"], p["text"], meta)
-                    storage.mark(con, out["tid"], "done")
-                    depth = con.execute(
-                        "SELECT depth FROM tasks WHERE id=?",
-                        (out["tid"],)).fetchone()[0]
+                                          p["missing"], commit=False)
+                    storage.store_item(con, p["url"], p["title"], p["text"],
+                                       meta, commit=False)
+                    storage.mark(con, out["tid"], "done", commit=False)
+                    depth = arg[2]
                     kids = [u for (u, t) in p["links"]
                             if in_scope(query, u, t)]
                     if not max_depth or depth + 1 <= max_depth:
-                        queue.add_urls(con, kids, depth + 1, storage)
+                        queue.add_urls(con, kids, depth + 1, storage,
+                                       commit=False)
                     pages += 1
                     met.event("page", url=p["url"])
                     escalated += bool(out.get("escalated"))
                 elif out.get("challenge"):
                     con.execute("UPDATE tasks SET challenges=challenges+1"
                                 " WHERE id=?", (out["tid"],))
-                    pool.note_challenge(ident["sid"])
+                    pool.note_challenge(ident["sid"], commit=False)
                     if out.get("retry"):
                         con.execute("UPDATE tasks SET status='queued'"
                                     " WHERE id=?", (out["tid"],))
@@ -225,12 +236,17 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                         met.event("poison", url=url,
                                   reason=out["error"][:120])
                         blocked += 1
-                    con.commit()
                 else:
-                    con.execute("UPDATE tasks SET status='failed', note=?"
-                                " WHERE id=?",
-                                (out["error"][:120], out["tid"]))
-                    con.commit()
+                    if out.get("retry"):
+                        con.execute("UPDATE tasks SET status='queued'"
+                                    " WHERE id=?", (out["tid"],))
+                    else:
+                        con.execute("UPDATE tasks SET status='failed', note=?"
+                                    " WHERE id=?",
+                                    (out["error"][:120], out["tid"]))
+            con.commit()  # one commit per batch
+            met.flush()
+    met.flush()
     summary = met.summary()
     return {"query": query, "pages": pages, "blocked": blocked,
             "escalated": escalated, "db": db_path, "metrics": summary,

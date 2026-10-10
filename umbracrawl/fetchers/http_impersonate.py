@@ -19,15 +19,25 @@ WALL_KEYWORDS = ("captcha", "just a moment", "attention required",
 
 BLOCK_STATUS = {403, 429, 503}
 
+TRANSIENT_MARKS = ("timed out", "timeout", "connection reset",
+                   "connection aborted", "temporary failure",
+                   "service unavailable", "bad gateway", "gateway timeout",
+                   "too many requests")
+
+MAX_TRANSIENT_TRIES = 4
+
+
+def is_transient(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    text = f"{name} {exc}".lower()
+    return any(m in text for m in TRANSIENT_MARKS) or \
+        isinstance(exc, TimeoutError)
+
 
 def fetch(url: str, timeout: int = 30, cookies: dict | None = None,
           proxy: str | None = None, headers: dict | None = None) -> dict:
     t0 = time.time()
-    base = {"User-Agent": UA}
-    if headers:
-        base.update(headers)
-    else:
-        headers = base
+    headers = {"User-Agent": UA, **(headers or {})}
     proxies = {"http": proxy, "https": proxy} if proxy else None
     if HAVE_CREL:
         kw: dict = {"impersonate": "chrome124", "timeout": timeout,
@@ -44,7 +54,7 @@ def fetch(url: str, timeout: int = 30, cookies: dict | None = None,
         return {"status": r.status_code, "text": r.text,
                 "headers": dict(r.headers), "cookies": jar,
                 "ms": int((time.time() - t0) * 1000), "backend": "curl_cffi"}
-    req = urllib.request.Request(url, headers=base)
+    req = urllib.request.Request(url, headers=headers)
     if proxy:
         req.set_proxy(proxy, "http")
         req.set_proxy(proxy, "https")
