@@ -10,6 +10,7 @@ files=$(git status --porcelain | awk '{print $2}' | head -8)
 
 # message is the matter only, no area prefix
 n=$(echo "$files" | wc -l)
+first=$(printf '%s\n' "$files" | head -1)
 base=$(basename "$first")
 if [ "$n" -eq 1 ]; then
   msg="update $base"
@@ -18,7 +19,7 @@ else
 fi
 msg=$(echo "$msg" | cut -c1-72)
 
-git add -A -q
+git add -A
 git commit -q -m "$msg" >>"$LOG" 2>&1 || exit 0
 echo "$(date -Is) committed: $msg" >>"$LOG"
 

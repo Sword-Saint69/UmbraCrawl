@@ -9,9 +9,10 @@ env keys (snapshot of a live page / request):
 """
 from __future__ import annotations
 
-CHROME_ORDER = ["host", "connection", "upgrade-insecure-requests", "user-agent",
-                "accept", "sec-fetch-site", "sec-fetch-mode",
-                "sec-fetch-user", "sec-fetch-dest", "accept-language"]
+CANON = ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
+         "upgrade-insecure-requests", "user-agent", "accept",
+         "sec-fetch-site", "sec-fetch-mode", "sec-fetch-user",
+         "sec-fetch-dest", "accept-encoding", "accept-language", "cookie"]
 
 
 def check_webdriver(env: dict) -> tuple[bool, str]:
@@ -31,10 +32,9 @@ def check_webgl(env: dict) -> tuple[bool, str]:
 
 def check_headers(env: dict) -> tuple[bool, str]:
     seen = [h.lower() for h in (env.get("headers") or [])]
-    core = [h for h in CHROME_ORDER if h in seen]
-    want = [h for h in CHROME_ORDER if h in core]
-    ok = core == [h for h in want if h in seen][:len(core)] and \
-        "user-agent" in seen
+    expected = [h for h in CANON if h in seen]
+    actual = [h for h in seen if h in CANON]
+    ok = bool(expected) and expected == actual and "user-agent" in seen
     return ok, "header-order-ok" if ok else "header-order-bad"
 
 

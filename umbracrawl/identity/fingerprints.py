@@ -47,13 +47,14 @@ def pick_profile(rng: random.Random | None = None) -> dict:
 
 
 def headers_for(profile: dict) -> dict:
+    # insertion order follows CANON in leakcheck (Chrome send order)
     return {
-        "User-Agent": profile["ua"],
-        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
-                   "image/avif,image/webp,*/*;q=0.8"),
-        "Accept-Language": f"{profile['locale']},{profile['locale'].split('-')[0]};q=0.9",
         "Sec-CH-UA": profile["sec_ch_ua"],
         "Sec-CH-UA-Mobile": "?0",
         "Sec-CH-UA-Platform": profile["sec_ch_ua_platform"],
         "Upgrade-Insecure-Requests": "1",
+        "User-Agent": profile["ua"],
+        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                   "image/avif,image/webp,*/*;q=0.8"),
+        "Accept-Language": f"{profile['locale']},{profile['locale'].split('-')[0]};q=0.9",
     }
