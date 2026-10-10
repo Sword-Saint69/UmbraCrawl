@@ -1,0 +1,26 @@
+# Default field specs for book research. Add candidates as layouts drift;
+# winners are re-ranked by win rate, so order here is only the first guess.
+fields:
+  title:
+    - css: "h1.book-title"
+    - css: "h1.product-title"
+    - css: "h1"
+    - xpath: "//meta[@property='og:title']/@content"
+  author:
+    - css: ".author-name"
+    - css: ".byline a"
+    - css: "a.author"
+    - xpath: "//meta[@name='author']/@content"
+  price:
+    - css: ".price-current"
+    - css: ".book-price"
+    - css: "[itemprop='price']"
+    - xpath: "//*[contains(@class,'price')][1]"
+  rating:
+    - css: ".rating-value"
+    - css: ".stars[data-rating]"
+    - xpath: "//*[@itemprop='ratingValue']"
+  review:
+    - css: ".review-body"
+    - css: ".editorial-review"
+    - css: ".blurb"
