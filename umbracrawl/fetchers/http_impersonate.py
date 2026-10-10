@@ -15,7 +15,8 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 WALL_KEYWORDS = ("captcha", "just a moment", "attention required",
                  "turnstile", "datadome", "perimeterx", "imperva",
-                 "challenge-platform", "verify you are human")
+                 "challenge-platform", "verify you are human",
+                 "verifying you are human")
 
 BLOCK_STATUS = {403, 429, 503}
 

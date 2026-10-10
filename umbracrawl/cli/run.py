@@ -88,7 +88,7 @@ def _crawl_one(args: tuple) -> dict:
     blocked, reason = _http.is_challenge(status, text)
     if blocked:
         met.event("challenge", url=url, reason=reason)
-        decision = _router.route(challenges + 1, attempts)
+        decision = _router.route(challenges + 1)
         if decision == "http":
             return {"tid": tid, "ok": False, "challenge": True,
                     "error": f"challenge:{reason}", "retry": True}
@@ -185,7 +185,10 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                 break
             if deadline and time.time() >= deadline:
                 break
-            batch = storage.lease(con, max_workers, commit=False)
+            batch = storage.lease(
+                con, max_workers if not max_pages
+                else max(1, min(max_workers, max_pages - pages)),
+                commit=False)
             if not batch:
                 con.commit()
                 break
@@ -225,7 +228,9 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                 elif out.get("challenge"):
                     con.execute("UPDATE tasks SET challenges=challenges+1"
                                 " WHERE id=?", (out["tid"],))
-                    pool.note_challenge(ident["sid"], commit=False)
+                    retired = pool.note_challenge(ident["sid"], commit=False)
+                    if retired:
+                        px.release(ident["sid"])
                     if out.get("retry"):
                         con.execute("UPDATE tasks SET status='queued'"
                                     " WHERE id=?", (out["tid"],))
