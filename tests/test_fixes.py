@@ -22,6 +22,14 @@ def test_gate_serializes_same_host():
     assert time.time() - t0 >= 0.6  # 3 gaps x 0.3 minus scheduling slack
 
 
+def test_gate_same_host_spaced_not_stacked():
+    g = politeness.Gate(min_delay=0.2)
+    t0 = time.time()
+    g.wait("https://s.example/a")
+    g.wait("https://s.example/b")
+    assert time.time() - t0 >= 0.2
+
+
 def test_transient_retries_then_succeeds(tmp_path):
     import umbracrawl.cli.run as run_mod
     calls = {"n": 0}
@@ -77,6 +85,27 @@ def test_fts_punctuation_safe(tmp_path):
     rows = store.search_items(con, "Dune (novel)")
     assert rows and rows[0][0] == "https://a.example/d"
     con.close()
+
+
+def test_metrics_thread_safe(tmp_path):
+    import threading
+    from umbracrawl.observability.metrics import Metrics
+    m = Metrics(str(tmp_path / "m.jsonl"))
+
+    def hammer():
+        for i in range(500):
+            m.event("fetch", i=i)
+
+    ts = [threading.Thread(target=hammer) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    m.flush()
+    assert m.requests == 2000
+    import json
+    lines = open(str(tmp_path / "m.jsonl")).read().splitlines()
+    assert len(lines) == 2000
+    for ln in lines:
+        json.loads(ln)  # no torn lines
 
 
 def test_scope_needs_coverage():

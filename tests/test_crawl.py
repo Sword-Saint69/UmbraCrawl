@@ -38,6 +38,16 @@ def test_challenge():
     assert http.is_thin(200, "short")
 
 
+def test_walled_article_needs_browser():
+    with open(os.path.join(os.path.dirname(__file__), "fixtures",
+                           "walled_article.html")) as f:
+        html = f.read()
+    assert len(html) > 5 * 1024
+    blocked, reason = http.is_challenge(200, html)
+    assert blocked and reason == "wall-keyword"
+    assert http.is_thin(200, html) is False
+
+
 def test_clean_link_unwraps_redirect():
     wrapped = ("//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org"
                "%2Fwiki%2FDune_(novel)&rut=189b04")

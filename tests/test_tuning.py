@@ -32,8 +32,9 @@ def test_recover_requeues_leased(tmp_path):
     store.lease(con, 1)
     assert store.pending(con) == 1
     assert store.recover(con) == 1
-    row = con.execute("SELECT status FROM tasks").fetchone()
-    assert row[0] == "queued"
+    row = con.execute(
+        "SELECT status,attempts,challenges FROM tasks").fetchone()
+    assert row == ("queued", 0, 0)
     con.close()
 
 
@@ -66,8 +67,8 @@ def test_budgets_stop_loop(tmp_path):
     search.search_links = lambda q: ["https://loop.example/0"]
     try:
         db = str(tmp_path / "u.db")
-        s1 = run_mod.research("loop", db, max_workers=1, max_pages=3)
-        assert s1["pages"] == 3
+        s1 = run_mod.research("loop", db, max_workers=4, max_pages=3)
+        assert s1["pages"] == 3  # no batch overshoot
         s2 = run_mod.research("loop", str(tmp_path / "v.db"), max_workers=1,
                               max_depth=0, timeout=60)
         assert s2["pages"] >= 1

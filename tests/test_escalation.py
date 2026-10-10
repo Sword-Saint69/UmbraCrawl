@@ -16,10 +16,11 @@ def _read(name: str) -> str:
 
 
 def test_route_ladder():
-    assert router.route(0, 0) == "http"
-    assert router.route(1, 0) == "http"
-    assert router.route(1, 2) == "browser"
-    assert router.route(4, 9) == "poison"
+    assert router.route(0) == "http"
+    assert router.route(1) == "http"
+    assert router.route(2) == "browser"
+    assert router.route(3) == "browser"
+    assert router.route(4) == "poison"
 
 
 def test_slot_unavailable_without_backend_or_stub():
