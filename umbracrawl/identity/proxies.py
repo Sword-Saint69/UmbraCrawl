@@ -1,6 +1,7 @@
-"""Proxy pool: sticky per session, cooldown on failure."""
+"""Proxy pool: sticky per session, cooldown on failure. Thread-safe."""
 from __future__ import annotations
 
+import threading
 import time
 
 FAIL_LIMIT = 3
@@ -14,6 +15,7 @@ class ProxyPool:
         self._cool_until: dict[str, float] = {}
         self._sticky: dict[str, str] = {}
         self._cursor = 0
+        self._lock = threading.Lock()
 
     def _healthy(self, p: str) -> bool:
         return self._cool_until.get(p, 0.0) <= time.time()
@@ -21,24 +23,26 @@ class ProxyPool:
     def checkout(self, session_id: str) -> str | None:
         if not self.proxies:
             return None  # direct connection
-        if self._sticky.get(session_id) and \
-                self._healthy(self._sticky[session_id]):
-            return self._sticky[session_id]
-        for _ in self.proxies:
-            p = self.proxies[self._cursor % len(self.proxies)]
-            self._cursor += 1
-            if self._healthy(p):
-                self._sticky[session_id] = p
-                return p
-        return self.proxies[0]  # all cooling: least-bad fallback
+        with self._lock:
+            if self._sticky.get(session_id) and \
+                    self._healthy(self._sticky[session_id]):
+                return self._sticky[session_id]
+            for _ in self.proxies:
+                p = self.proxies[self._cursor % len(self.proxies)]
+                self._cursor += 1
+                if self._healthy(p):
+                    self._sticky[session_id] = p
+                    return p
+            return self.proxies[0]  # all cooling: least-bad fallback
 
     def report(self, proxy: str | None, ok: bool) -> None:
         if not proxy:
             return
-        if ok:
-            self._fails[proxy] = 0
-            return
-        self._fails[proxy] = self._fails.get(proxy, 0) + 1
-        if self._fails[proxy] >= FAIL_LIMIT:
-            self._cool_until[proxy] = time.time() + COOLDOWN_SEC
-            self._fails[proxy] = 0
+        with self._lock:
+            if ok:
+                self._fails[proxy] = 0
+                return
+            self._fails[proxy] = self._fails.get(proxy, 0) + 1
+            if self._fails[proxy] >= FAIL_LIMIT:
+                self._cool_until[proxy] = time.time() + COOLDOWN_SEC
+                self._fails[proxy] = 0
