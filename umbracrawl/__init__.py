@@ -1,2 +1,2 @@
-"""UmbraCrawl v0.2: local-first deep research crawler with identity layer."""
-__version__ = "0.2.0"
+"""UmbraCrawl v0.3: local-first deep research crawler with escalation."""
+__version__ = "0.3.0"
