@@ -12,7 +12,46 @@ from ..fetchers import router as _router
 from ..identity import fingerprints, leakcheck, proxies, sessions
 from ..scheduler import politeness, queue
 
+try:
+    from ..parser import adaptive as _adaptive
+    from ..parser import markdown as _md
+    from ..parser import relearn as _relearn
+    HAVE_PARSER = True
+except ImportError:
+    HAVE_PARSER = False
+
 WORKERS = 4
+
+_SPECS = None
+
+
+def _specs() -> dict:
+    global _SPECS
+    if _SPECS is None:
+        _SPECS = {}
+        if HAVE_PARSER:
+            try:
+                import pathlib
+                import yaml
+                p = pathlib.Path(__file__).parent.parent / "parser" \
+                    / "selectors.yml"
+                _SPECS = yaml.safe_load(p.read_text())["fields"]
+            except Exception:
+                _SPECS = {}
+    return _SPECS
+
+
+def _enrich(url: str, text: str, page: dict) -> dict:
+    page["html"] = text[:200000]
+    if HAVE_PARSER and _specs():
+        fields = _adaptive.extract_fields(text, _specs())
+        page["fields"] = {f: v["value"] for f, v in fields.items() if v}
+        page["missing"] = [f for f, v in fields.items() if not v]
+        page["markdown"] = _md.to_markdown(url, text)
+    else:
+        page["fields"], page["missing"] = {}, []
+        page["markdown"] = ""
+    return page
 
 
 def _tokens(query: str) -> set[str]:
@@ -55,7 +94,7 @@ def _crawl_one(args: tuple) -> dict:
                     return {"tid": tid, "ok": False, "challenge": True,
                             "error": "challenge:browser-walled"}
                 try:
-                    page = _extract.extract(url, tx2)
+                    page = _enrich(url, tx2, _extract.extract(url, tx2))
                 except Exception as e:
                     return {"tid": tid, "ok": False,
                             "error": f"parse:{e}"[:120]}
@@ -68,7 +107,7 @@ def _crawl_one(args: tuple) -> dict:
     if not (200 <= status < 300):
         return {"tid": tid, "ok": False, "error": f"http-{status}"}
     try:
-        page = _extract.extract(url, text)
+        page = _enrich(url, text, _extract.extract(url, text))
     except Exception as e:
         return {"tid": tid, "ok": False, "error": f"parse:{e}"[:120]}
     return {"tid": tid, "ok": True, "page": page,
@@ -126,7 +165,12 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                 if out["ok"]:
                     p = out["page"]
                     pool.save_cookies(ident["sid"], out["cookies"])
-                    meta = {"description": p["description"]}
+                    meta = {"description": p["description"],
+                            "fields": p.get("fields", {}),
+                            "markdown": p.get("markdown", "")}
+                    if HAVE_PARSER and p.get("missing"):
+                        _relearn.snapshot(con, p["url"], p.get("html", ""),
+                                          p["missing"])
                     storage.store_item(con, p["url"], p["title"], p["text"], meta)
                     storage.mark(con, out["tid"], "done")
                     depth = con.execute(
