@@ -21,12 +21,13 @@ def ensure(con: sqlite3.Connection) -> None:
 
 
 def snapshot(con: sqlite3.Connection, url: str, html: str,
-             missing: list[str]) -> None:
+             missing: list[str], commit: bool = True) -> None:
     ensure(con)
     con.execute("INSERT OR REPLACE INTO snapshots(url,html,missing,created)"
                 " VALUES(?,?,?,?)",
                 (url, html[:50000], ",".join(missing), time.time()))
-    con.commit()
+    if commit:
+        con.commit()
 
 
 def record(con: sqlite3.Connection, field: str, selector: str,

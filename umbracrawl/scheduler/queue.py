@@ -11,7 +11,7 @@ def priority_for(depth: int) -> float:
 
 
 def add_urls(con: sqlite3.Connection, urls: list[str], depth: int,
-             storage) -> int:
+             storage, commit: bool = True) -> int:
     rows = []
     for u in urls:
         try:
@@ -21,4 +21,4 @@ def add_urls(con: sqlite3.Connection, urls: list[str], depth: int,
         if not norm.startswith(("http://", "https://")):
             continue
         rows.append((norm, url_hash(norm), depth, priority_for(depth)))
-    return storage.enqueue(con, rows)
+    return storage.enqueue(con, rows, commit=commit)

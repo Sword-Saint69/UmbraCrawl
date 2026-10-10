@@ -17,6 +17,7 @@ class Metrics:
         self.escalated = 0
         self.poisoned = 0
         self.started = time.time()
+        self._buf: list[str] = []
 
     def event(self, kind: str, **fields) -> None:
         self.requests += kind == "fetch"
@@ -25,9 +26,16 @@ class Metrics:
         self.escalated += kind == "escalated"
         self.poisoned += kind == "poison"
         if self.path:
+            self._buf.append(json.dumps({"t": time.time(), "k": kind,
+                                         **fields}))
+            if len(self._buf) >= 50:
+                self.flush()
+
+    def flush(self) -> None:
+        if self.path and self._buf:
             with open(self.path, "a") as f:
-                f.write(json.dumps({"t": time.time(), "k": kind,
-                                    **fields}) + "\n")
+                f.write("\n".join(self._buf) + "\n")
+            self._buf = []
 
     def summary(self) -> dict:
         elapsed = max(time.time() - self.started, 1e-3)
