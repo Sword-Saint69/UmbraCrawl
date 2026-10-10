@@ -115,6 +115,13 @@ def pending(con: sqlite3.Connection) -> int:
     return int(row[0])
 
 
+def recover(con: sqlite3.Connection) -> int:
+    """Crash recovery: stale 'leased' rows back to 'queued'."""
+    cur = con.execute("UPDATE tasks SET status='queued' WHERE status='leased'")
+    con.commit()
+    return cur.rowcount
+
+
 def store_item(con: sqlite3.Connection, url: str, title: str,
                text: str, meta: dict | None = None) -> None:
     con.execute(
@@ -131,7 +138,7 @@ def search_items(con: sqlite3.Connection, query: str, limit: int = 8) -> list[tu
             return con.execute(
                 "SELECT url,title,snippet(items_fts,1,'[',']','...',24) FROM items"
                 " JOIN items_fts ON items.rowid=items_fts.rowid"
-                " WHERE items_fts MATCH ? LIMIT ?",
+                " WHERE items_fts MATCH ? ORDER BY bm25(items_fts) LIMIT ?",
                 (query, limit),
             ).fetchall()
         except sqlite3.OperationalError:
