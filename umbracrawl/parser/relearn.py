@@ -25,7 +25,7 @@ def snapshot(con: sqlite3.Connection, url: str, html: str,
     ensure(con)
     con.execute("INSERT OR REPLACE INTO snapshots(url,html,missing,created)"
                 " VALUES(?,?,?,?)",
-                (url, html[:200000], ",".join(missing), time.time()))
+                (url, html[:50000], ",".join(missing), time.time()))
     con.commit()
 
 

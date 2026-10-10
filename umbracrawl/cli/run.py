@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import extract as _extract
@@ -44,7 +45,7 @@ def _specs() -> dict:
 
 
 def _enrich(url: str, text: str, page: dict) -> dict:
-    page["html"] = text[:200000]
+    page["html"] = text[:50000]  # snapshot budget: relearn needs source
     if HAVE_PARSER and _specs():
         fields = _adaptive.extract_fields(text, _specs())
         page["fields"] = {f: v["value"] for f, v in fields.items() if v}
@@ -129,17 +130,19 @@ def _crawl_one(args: tuple) -> dict:
 
 def research(query: str, db_path: str, max_workers: int = WORKERS,
              fetcher=None, proxy_list: list[str] | None = None,
-             browser_slot=None, fresh: bool = False) -> dict:
+             browser_slot=None, fresh: bool = False, max_pages: int = 0,
+             max_depth: int = 0, timeout: int = 0) -> dict:
     con = storage.connect(db_path)
     try:
         return _run(query, con, max_workers, proxy_list, browser_slot,
-                    fresh, db_path)
+                    fresh, db_path, max_pages, max_depth, timeout)
     finally:
         con.close()
 
 
 def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
-         fresh: bool, db_path: str) -> dict:
+         fresh: bool, db_path: str, max_pages: int, max_depth: int,
+         timeout: int) -> dict:
     gate = politeness.Gate()
     pool = sessions.SessionPool(con)
     px = proxies.ProxyPool(proxy_list)
@@ -161,11 +164,18 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
         con.execute("UPDATE tasks SET status='queued', attempts=0,"
                     " challenges=0, note='' WHERE status != 'queued'")
         con.commit()
+    else:
+        storage.recover(con)  # crashed run left rows leased: requeue them
     seeds = _search.search_links(query)
     queue.add_urls(con, seeds, 0, storage)
     pages = blocked = escalated = 0
+    deadline = time.time() + timeout if timeout else 0.0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         while storage.pending(con):
+            if max_pages and pages >= max_pages:
+                break
+            if deadline and time.time() >= deadline:
+                break
             batch = storage.lease(con, max_workers)
             if not batch:
                 break
@@ -196,7 +206,8 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                         (out["tid"],)).fetchone()[0]
                     kids = [u for (u, t) in p["links"]
                             if in_scope(query, u, t)]
-                    queue.add_urls(con, kids, depth + 1, storage)
+                    if not max_depth or depth + 1 <= max_depth:
+                        queue.add_urls(con, kids, depth + 1, storage)
                     pages += 1
                     met.event("page", url=p["url"])
                     escalated += bool(out.get("escalated"))
