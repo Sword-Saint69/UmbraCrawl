@@ -8,8 +8,10 @@ from .. import extract as _extract
 from .. import search as _search
 from .. import storage
 from ..fetchers import camoufox_pool, http_impersonate as _http
+from ..fetchers import patchright_pool
 from ..fetchers import router as _router
 from ..identity import fingerprints, leakcheck, proxies, sessions
+from ..observability import metrics as _metrics
 from ..scheduler import politeness, queue
 
 try:
@@ -67,8 +69,9 @@ def in_scope(query: str, url: str, title: str = "") -> bool:
 
 
 def _crawl_one(args: tuple) -> dict:
-    tid, url, depth, attempts, challenges, gate, ident, slot = args
+    tid, url, depth, attempts, challenges, gate, ident, slots, met = args
     gate.wait(url)
+    met.event("fetch", url=url)
     try:
         res = _http.fetch(url, cookies=ident["cookies"],
                           proxy=ident["proxy"], headers=ident["headers"])
@@ -77,31 +80,41 @@ def _crawl_one(args: tuple) -> dict:
     status, text = res.get("status", 0), res.get("text", "")
     blocked, reason = _http.is_challenge(status, text)
     if blocked:
+        met.event("challenge", url=url, reason=reason)
         decision = _router.route(challenges + 1, attempts)
         if decision == "http":
             return {"tid": tid, "ok": False, "challenge": True,
                     "error": f"challenge:{reason}", "retry": True}
         if decision == "browser":
-            if slot is not None and slot.available():
+            seen_backend = False
+            for slot in slots:
+                if slot is None or not slot.available():
+                    continue
+                seen_backend = True
                 try:
-                    res = slot.fetch(url, ident.get("profile"), ident["proxy"])
+                    res = slot.fetch(url, ident.get("profile"),
+                                     ident["proxy"])
                 except Exception as e:
                     return {"tid": tid, "ok": False, "challenge": True,
                             "error": f"browser:{e}"[:120]}
                 st2, tx2 = res.get("status", 200), res.get("text", "")
                 blocked2, _ = _http.is_challenge(st2, tx2)
                 if blocked2 or _http.is_thin(st2, tx2):
-                    return {"tid": tid, "ok": False, "challenge": True,
-                            "error": "challenge:browser-walled"}
+                    continue  # next backend in the chain
                 try:
                     page = _enrich(url, tx2, _extract.extract(url, tx2))
                 except Exception as e:
                     return {"tid": tid, "ok": False,
                             "error": f"parse:{e}"[:120]}
+                met.event("escalated", url=url,
+                          backend=res.get("backend", "?"))
                 return {"tid": tid, "ok": True, "page": page,
                         "cookies": res.get("cookies", {}), "escalated": True}
+            if not seen_backend:
+                return {"tid": tid, "ok": False, "challenge": True,
+                        "error": "challenge:no-browser"}
             return {"tid": tid, "ok": False, "challenge": True,
-                    "error": "challenge:no-browser"}
+                    "error": "challenge:browser-walled"}
         return {"tid": tid, "ok": False, "challenge": True,
                 "error": f"challenge:{reason}"}
     if not (200 <= status < 300):
@@ -138,7 +151,12 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
            "headers": list(headers)}
     assert leakcheck.gate(env), "identity failed leak gate"
     if browser_slot is None:
-        browser_slot = camoufox_pool.BrowserSlot()
+        slots = [camoufox_pool.BrowserSlot(), patchright_pool.BrowserSlot()]
+    elif isinstance(browser_slot, list):
+        slots = browser_slot
+    else:
+        slots = [browser_slot]
+    met = _metrics.Metrics(db_path + ".metrics.jsonl")
     if fresh:
         con.execute("UPDATE tasks SET status='queued', attempts=0,"
                     " challenges=0, note='' WHERE status != 'queued'")
@@ -158,7 +176,7 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                          "proxy": px.checkout(ses.sid), "headers": headers,
                          "profile": profile, "sid": ses.sid}
                 args.append((t0, url, depth, attempts, challenges, gate,
-                             ident, browser_slot))
+                             ident, slots, met))
             for out, arg in zip(ex.map(_crawl_one, args), args):
                 ident = arg[6]
                 px.report(ident["proxy"], out["ok"])
@@ -180,6 +198,7 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                             if in_scope(query, u, t)]
                     queue.add_urls(con, kids, depth + 1, storage)
                     pages += 1
+                    met.event("page", url=p["url"])
                     escalated += bool(out.get("escalated"))
                 elif out.get("challenge"):
                     con.execute("UPDATE tasks SET challenges=challenges+1"
@@ -192,6 +211,8 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                         con.execute("UPDATE tasks SET status='poison',"
                                     " note=? WHERE id=?",
                                     (out["error"][:120], out["tid"]))
+                        met.event("poison", url=url,
+                                  reason=out["error"][:120])
                         blocked += 1
                     con.commit()
                 else:
@@ -199,5 +220,7 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                                 " WHERE id=?",
                                 (out["error"][:120], out["tid"]))
                     con.commit()
+    summary = met.summary()
     return {"query": query, "pages": pages, "blocked": blocked,
-            "escalated": escalated, "db": db_path}
+            "escalated": escalated, "db": db_path, "metrics": summary,
+            "alerts": met.alerts()}
