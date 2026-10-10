@@ -38,6 +38,29 @@ def test_challenge():
     assert http.is_thin(200, "short")
 
 
+def test_forbidden_body():
+    import os
+    fix = os.path.join(os.path.dirname(__file__), "fixtures")
+    with open(os.path.join(fix, "forbidden.html")) as f:
+        body = f.read()
+    blocked, reason = http.is_challenge(403, body)
+    assert blocked and reason == "http-403"
+
+
+def test_merge_headers_canonical_position():
+    # no headers: default UA only
+    assert http.merge_headers(None) == {"User-Agent": http.UA}
+    # caller UA wins and keeps its position
+    given = {"User-Agent": "custom", "Accept": "*/*"}
+    assert http.merge_headers(given) == given
+    # default UA lands after the sec-ch-* group, before accept
+    merged = http.merge_headers({"Sec-CH-UA": "x", "Accept": "*/*",
+                                 "Accept-Language": "en"})
+    assert list(merged) == ["Sec-CH-UA", "User-Agent", "Accept",
+                            "Accept-Language"]
+    assert merged["User-Agent"] == http.UA
+
+
 def test_walled_article_needs_browser():
     with open(os.path.join(os.path.dirname(__file__), "fixtures",
                            "walled_article.html")) as f:

@@ -178,3 +178,69 @@ def test_fresh_recrawls(tmp_path):
                                 fresh=True)["pages"] == 1
     finally:
         _unpatch(old)
+
+
+class _CrashingDriver:
+    """A browser backend that raises instead of rendering."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, url, profile, proxy):
+        self.calls += 1
+        raise RuntimeError("browser crashed: target closed")
+
+
+def test_browser_exception_retries_once_then_poisons(tmp_path):
+    """A raising browser is a transport fault, not a wall.
+
+    It gets one retry while the ladder still has a browser rung left, then
+    terminates: no infinite browser spin-up loop.
+    """
+    import umbracrawl.cli.run as run_mod
+    from umbracrawl.storage import sqlite as store
+    db = str(tmp_path / "b.db")
+    driver = _CrashingDriver()
+    old = _patch(None, _wall_fetch, ["https://walled.example/guide"])
+    try:
+        stats = run_mod.research("guide", db, max_workers=1,
+                                 browser_slot=camoufox_pool.BrowserSlot(
+                                     driver=driver))
+    finally:
+        _unpatch(old)
+    assert stats["pages"] == 0 and stats["blocked"] == 1
+    assert driver.calls == 2  # one browser attempt, one retry
+    con = store.connect(db)
+    row = con.execute(
+        "SELECT status,attempts,challenges,note FROM tasks").fetchone()
+    con.close()
+    assert row[0] == "poison" and row[1] == 3 and row[2] == 3
+    assert "browser:" in row[3]
+
+
+def test_fetcher_param_is_used(tmp_path):
+    # research(fetcher=...) must reach the crawl without patching the module
+    import umbracrawl.cli.run as run_mod
+    from umbracrawl import search
+    from umbracrawl.storage import sqlite as store
+    db = str(tmp_path / "inj.db")
+    article = _read("article.html")
+    seen = {"n": 0}
+
+    def fake(url, **kw):
+        seen["n"] += 1
+        return {"status": 200, "text": article, "headers": {},
+                "cookies": {}, "ms": 1, "backend": "fake"}
+
+    old_search = search.search_links
+    search.search_links = lambda q: ["https://inject.example/guide"]
+    try:
+        stats = run_mod.research("guide", db, max_workers=1,
+                                 fetcher=fake)
+    finally:
+        search.search_links = old_search
+    assert seen["n"] >= 1
+    assert stats["pages"] == 1
+    con = store.connect(db)
+    assert con.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+    con.close()

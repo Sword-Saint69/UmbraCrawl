@@ -1,7 +1,7 @@
 # Changelog
 
 ## v1.0.0
-Stable. Full suite green (30 tests), docs complete. Fixes only from here.
+Stable. Full suite green (55 tests), docs complete. Fixes only from here.
 
 ## v0.5.0
 Patchright fallback slot, browser chain order, metrics + alert rules.

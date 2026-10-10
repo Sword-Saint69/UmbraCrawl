@@ -81,3 +81,38 @@ def test_markdown_basics():
     assert "[link](https://x.example/x)" in md
     assert "- one" in md
     assert "var z" not in md
+
+
+def test_research_records_and_consumes_win_rates(tmp_path):
+    """The relearn loop is wired: research() records per-selector hits and
+    feeds the accumulated rates back into the next extraction."""
+    import umbracrawl.cli.run as run_mod
+    import umbracrawl.fetchers.http_impersonate as http_mod
+    from umbracrawl import search
+    html = _read("book_a.html")
+
+    def ok(url, **kw):
+        return {"status": 200, "text": html, "headers": {}, "cookies": {},
+                "ms": 1, "backend": "fake"}
+
+    old_fetch, old_search = http_mod.fetch, search.search_links
+    http_mod.fetch = ok
+    search.search_links = lambda q: ["https://x.example/book"]
+    try:
+        db = str(tmp_path / "w.db")
+        assert run_mod.research("book", db, max_workers=1)["pages"] == 1
+        # second run on the same db: rates now feed extraction
+        assert run_mod.research("book", db, max_workers=1,
+                                fresh=True)["pages"] == 1
+    finally:
+        http_mod.fetch, search.search_links = old_fetch, old_search
+    con = store.connect(db)
+    rates = relearn.rates(con)
+    con.close()
+    # one page crawled: a matching selector is a win, a miss is still a try
+    assert rates["title|h1.book-title"] == (2, 2)
+    assert rates["price|.price-current"] == (2, 2)
+    assert rates["title|h1.product-title"] == (0, 2)
+    # the winner re-ranked above the no-hit candidate wins the next page
+    ranked = adaptive.extract_fields(html, _specs(), rates)
+    assert ranked["title"]["selector"] == {"css": "h1.book-title"}

@@ -16,6 +16,15 @@ CREATE TABLE IF NOT EXISTS selector_stats(
 
 
 def ensure(con: sqlite3.Connection) -> None:
+    # executescript() COMMITs the caller's open transaction. Callers that
+    # batch writes with commit=False must not be silently committed mid
+    # batch, so the tables are probed first and the script runs only when
+    # they are genuinely missing (at most once per database).
+    row = con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+        " AND name IN ('snapshots','selector_stats')").fetchone()
+    if row and row[0] >= 2:
+        return
     con.executescript(SCHEMA)
     con.commit()
 
@@ -31,14 +40,15 @@ def snapshot(con: sqlite3.Connection, url: str, html: str,
 
 
 def record(con: sqlite3.Connection, field: str, selector: str,
-           hit: bool) -> None:
+           hit: bool, commit: bool = True) -> None:
     ensure(con)
     con.execute("INSERT OR IGNORE INTO selector_stats(field,selector)"
                 " VALUES(?,?)", (field, selector))
     con.execute("UPDATE selector_stats SET tries=tries+1,"
                 " wins=wins+? WHERE field=? AND selector=?",
                 (1 if hit else 0, field, selector))
-    con.commit()
+    if commit:
+        con.commit()
 
 
 def rates(con: sqlite3.Connection) -> dict:

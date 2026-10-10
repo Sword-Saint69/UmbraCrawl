@@ -22,3 +22,6 @@ mendableai-firecrawl/
 __pycache__/
 *.pyc
 .venv/
+
+# build artifact
+umbracrawl.egg-info/

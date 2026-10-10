@@ -132,3 +132,86 @@ def test_answer_filters_stale(tmp_path):
     out = answer.compose("dune", db, max_age_days=30)
     assert "Fresh dune piece" in out
     assert "Old dune piece" not in out
+
+
+def test_poison_event_carries_the_poisoned_url(tmp_path):
+    """Every poison event names the task that actually died.
+
+    With a multi-worker batch, the results loop used to stamp the leftover
+    `url` from the lease unpack, so all poison events in one batch carried
+    the last URL of that batch.
+    """
+    import json
+
+    import umbracrawl.cli.run as run_mod
+    from umbracrawl.fetchers import camoufox_pool
+
+    wall = open(os.path.join(os.path.dirname(__file__), "fixtures",
+                             "cloudflare.html")).read()
+    seeds = ["https://first.example/poison", "https://second.example/poison"]
+    old_fetch, old_search = http_mod.fetch, search.search_links
+    http_mod.fetch = lambda url, **kw: {
+        "status": 200, "text": wall, "headers": {}, "cookies": {},
+        "ms": 1, "backend": "fake"}
+    search.search_links = lambda q: seeds
+    try:
+        db = str(tmp_path / "p.db")
+        stats = run_mod.research("guide", db, max_workers=4,
+                                 browser_slot=camoufox_pool.BrowserSlot())
+    finally:
+        http_mod.fetch, search.search_links = old_fetch, old_search
+    assert stats["blocked"] == 2
+    events = [json.loads(l) for l in open(db + ".metrics.jsonl")]
+    poisons = [e["url"] for e in events if e["k"] == "poison"]
+    assert sorted(poisons) == sorted(seeds)
+    con = store.connect(db)
+    notes = [r[0] for r in con.execute(
+        "SELECT note FROM tasks WHERE status='poison'").fetchall()]
+    con.close()
+    assert len(notes) == 2  # both tasks, each with its own reason
+
+
+def test_snapshot_commit_false_keeps_batch_atomic(tmp_path):
+    """ensure() runs executescript, which COMMITs an open transaction."""
+    from umbracrawl.parser import relearn
+    con = store.connect(str(tmp_path / "e.db"))
+    relearn.ensure(con)  # tables exist before any pending write
+    store.enqueue(con, [("https://a.example/", "h", 0, 0.0)], commit=False)
+    relearn.snapshot(con, "https://a.example/", "<html></html>", ["price"],
+                     commit=False)
+    con.rollback()
+    assert con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 0
+    con.close()
+
+
+def test_can_fetch_fails_open_and_honors_timeout():
+    from umbracrawl.scheduler import politeness
+    import urllib.request
+    seen = {}
+
+    class _Resp:
+        def read(self):
+            return b"User-agent: *\nDisallow: /private\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    old = urllib.request.urlopen
+
+    def fake_urlopen(u, timeout=None):
+        seen["timeout"] = timeout
+        return _Resp()
+
+    urllib.request.urlopen = fake_urlopen
+    try:
+        assert politeness.can_fetch("https://x.example/private") is False
+        assert politeness.can_fetch("https://x.example/public") is True
+        assert seen["timeout"] == 10
+        # unreachable host: the gate fails open instead of blocking a crawl
+        assert politeness.can_fetch("http://127.0.0.1:1/x") is True
+    finally:
+        urllib.request.urlopen = old

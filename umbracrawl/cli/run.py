@@ -44,15 +44,24 @@ def _specs() -> dict:
     return _SPECS
 
 
-def _enrich(url: str, text: str, page: dict) -> dict:
+def _enrich(url: str, text: str, page: dict,
+            stats: dict | None = None) -> dict:
     page["html"] = text[:50000]  # snapshot budget: relearn needs source
     if HAVE_PARSER and _specs():
-        fields = _adaptive.extract_fields(text, _specs())
+        hits: dict[str, list[tuple[str, bool]]] = {}
+
+        def _record(field: str, selector: str, ok: bool) -> None:
+            hits.setdefault(field, []).append((selector, ok))
+
+        fields = _adaptive.extract_fields(text, _specs(), stats,
+                                          record=_record)
         page["fields"] = {f: v["value"] for f, v in fields.items() if v}
         page["missing"] = [f for f, v in fields.items() if not v]
+        page["hits"] = hits  # main thread records these after commit
         page["markdown"] = _md.to_markdown(url, text)
     else:
         page["fields"], page["missing"] = {}, []
+        page["hits"] = {}
         page["markdown"] = ""
     return page
 
@@ -72,12 +81,13 @@ def in_scope(query: str, url: str, title: str = "") -> bool:
 
 
 def _crawl_one(args: tuple) -> dict:
-    tid, url, depth, attempts, challenges, gate, ident, slots, met = args
+    (tid, url, depth, attempts, challenges, gate, ident, slots, met,
+     stats, fetch_fn) = args
     gate.wait(url)
     met.event("fetch", url=url)
     try:
-        res = _http.fetch(url, cookies=ident["cookies"],
-                          proxy=ident["proxy"], headers=ident["headers"])
+        res = fetch_fn(url, cookies=ident["cookies"],
+                       proxy=ident["proxy"], headers=ident["headers"])
     except Exception as e:
         if _http.is_transient(e) and attempts < _http.MAX_TRANSIENT_TRIES:
             time.sleep(min(2 ** max(attempts - 1, 0), 8))
@@ -105,14 +115,21 @@ def _crawl_one(args: tuple) -> dict:
                     res = slot.fetch(url, ident.get("profile"),
                                      ident["proxy"])
                 except Exception as e:
+                    # A browser that raises (CDP drop, driver crash) is a
+                    # transport fault, not a wall. Retry once while the
+                    # ladder still has a browser rung beneath this one:
+                    # challenges is the pre-bump count, so < 2 keeps the
+                    # next route() call on 'browser' instead of 'poison'.
                     return {"tid": tid, "ok": False, "challenge": True,
-                            "error": f"browser:{e}"[:120]}
+                            "error": f"browser:{e}"[:120],
+                            "retry": challenges < 2}
                 st2, tx2 = res.get("status", 200), res.get("text", "")
                 blocked2, _ = _http.is_challenge(st2, tx2)
                 if blocked2 or _http.is_thin(st2, tx2):
                     continue  # next backend in the chain
                 try:
-                    page = _enrich(url, tx2, _extract.extract(url, tx2))
+                    page = _enrich(url, tx2, _extract.extract(url, tx2),
+                                   stats)
                 except Exception as e:
                     return {"tid": tid, "ok": False,
                             "error": f"parse:{e}"[:120]}
@@ -130,7 +147,7 @@ def _crawl_one(args: tuple) -> dict:
     if not (200 <= status < 300):
         return {"tid": tid, "ok": False, "error": f"http-{status}"}
     try:
-        page = _enrich(url, text, _extract.extract(url, text))
+        page = _enrich(url, text, _extract.extract(url, text), stats)
     except Exception as e:
         return {"tid": tid, "ok": False, "error": f"parse:{e}"[:120]}
     return {"tid": tid, "ok": True, "page": page,
@@ -146,14 +163,15 @@ def research(query: str, db_path: str, max_workers: int = WORKERS,
     try:
         return _run(query, con, max_workers, proxy_list, browser_slot,
                     fresh, db_path, max_pages, max_depth, timeout,
-                    politeness_delay)
+                    politeness_delay, fetcher)
     finally:
         con.close()
 
 
 def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
          fresh: bool, db_path: str, max_pages: int, max_depth: int,
-         timeout: int, politeness_delay: float) -> dict:
+         timeout: int, politeness_delay: float,
+         fetcher=None) -> dict:
     gate = politeness.Gate(min_delay=politeness_delay)
     pool = sessions.SessionPool(con)
     px = proxies.ProxyPool(proxy_list)
@@ -162,8 +180,9 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
     env = {"webdriver": None, "cdp_keys": [],
            "webgl_renderer": profile["webgl"],
            "profile_renderer": profile["webgl"],
-           "headers": list(headers)}
-    assert leakcheck.gate(env), "identity failed leak gate"
+           "headers": list(_http.merge_headers(headers))}
+    if not leakcheck.gate(env):
+        raise RuntimeError("identity failed leak gate")
     if browser_slot is None:
         slots = [camoufox_pool.BrowserSlot(), patchright_pool.BrowserSlot()]
     elif isinstance(browser_slot, list):
@@ -171,6 +190,8 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
     else:
         slots = [browser_slot]
     met = _metrics.Metrics(db_path + ".metrics.jsonl")
+    # caller-injected fetcher for tests; module attr stays patchable too
+    fetch_fn = fetcher or _http.fetch
     if fresh:
         con.execute("UPDATE tasks SET status='queued', attempts=0,"
                     " challenges=0, note='' WHERE status != 'queued'")
@@ -194,6 +215,8 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
             if not batch:
                 con.commit()
                 break
+            # fresh win rates each batch: earlier pages re-rank later ones
+            stats = _relearn.rates(con) if HAVE_PARSER else {}
             args = []
             for (t0, url, depth, attempts, challenges) in batch:
                 ses = pool.checkout(commit=False)
@@ -201,14 +224,25 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                          "proxy": px.checkout(ses.sid), "headers": headers,
                          "profile": profile, "sid": ses.sid}
                 args.append((t0, url, depth, attempts, challenges, gate,
-                             ident, slots, met))
+                             ident, slots, met, stats, fetch_fn))
             for out, arg in zip(ex.map(_crawl_one, args), args):
                 ident = arg[6]
-                px.report(ident["proxy"], out["ok"])
+                # A challenge already retires the session (note_challenge
+                # below). Scoring the proxy for it punishes a healthy egress
+                # for a site-side wall, so only real transport results count.
+                if not out.get("challenge"):
+                    px.report(ident["proxy"], out["ok"])
                 if out["ok"]:
                     p = out["page"]
                     pool.save_cookies(ident["sid"], out["cookies"],
                                       commit=False)
+                    if HAVE_PARSER:
+                        # selector win rates, recorded on the main thread so
+                        # the batched commit=False stays batch-atomic
+                        for field, cand in p.get("hits", {}).items():
+                            for sel, ok in cand:
+                                _relearn.record(con, field, sel, ok,
+                                                commit=False)
                     meta = {"description": p["description"],
                             "fields": p.get("fields", {}),
                             "markdown": p.get("markdown", "")}
@@ -240,7 +274,7 @@ def _run(query: str, con, max_workers: int, proxy_list, browser_slot,
                         con.execute("UPDATE tasks SET status='poison',"
                                     " note=? WHERE id=?",
                                     (out["error"][:120], out["tid"]))
-                        met.event("poison", url=url,
+                        met.event("poison", url=arg[1],
                                   reason=out["error"][:120])
                         blocked += 1
                 else:

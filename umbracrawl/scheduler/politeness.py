@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+import urllib.request
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -33,9 +34,16 @@ class Gate:
 def can_fetch(url: str, ua: str = "UmbraCrawl/0.1", timeout: float = 10) -> bool:
     try:
         p = urlparse(url)
+        if not p.hostname:
+            return True
+        # RobotFileParser.read() takes no timeout, so fetch with one
+        # ourselves and parse the lines; any failure fails open.
+        with urllib.request.urlopen(
+                f"{p.scheme}://{p.netloc}/robots.txt",
+                timeout=timeout) as r:
+            body = r.read().decode("utf-8", "replace")
         rp = RobotFileParser()
-        rp.set_url(f"{p.scheme}://{p.netloc}/robots.txt")
-        rp.read()
+        rp.parse(body.splitlines())
         return rp.can_fetch(ua, url)
     except Exception:
         return True

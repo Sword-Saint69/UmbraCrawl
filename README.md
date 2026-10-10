@@ -2,7 +2,7 @@
 
 Local-first research crawler. You type `research a book`, it crawls the full
 result frontier and answers from a local SQLite store. 4 workers, no page cap,
-no servers. Stable release: 30 tests green, docs in `docs/`.
+no servers. Stable release: 55 tests green, docs in `docs/`.
 
 ## Use
 
@@ -15,10 +15,20 @@ python -m umbracrawl "research a book Dune" --fresh   # re-crawl stored URLs
 Each run starts with a live search; page bodies come from SQLite when fresh.
 Repeat queries skip stored URLs unless stale or `--fresh` is given.
 
+## Use from OpenCode
+
+Registered globally as the `umbracrawl_research` tool via
+`~/.config/opencode/plugin/umbracrawl/index.js`. The tool runs this same CLI
+against `~/.umbracrawl.db` and takes optional `fresh`, `db`, `max_pages`,
+`max_depth`, and `timeout` arguments. The crawler itself is installed
+editable at `~/.local/share/umbracrawl/venv` (override the interpreter with
+`UMBRACRAWL_PYTHON` and the store with `UMBRACRAWL_DB`).
+
 ## How a page is fetched
 
 1. HTTP with chrome124 impersonation, bound identity (session + proxy + profile).
-2. On challenge: one HTTP retry, then the borrowed Camoufox browser slot.
+2. On challenge: one HTTP retry, then the borrowed browser chain (Camoufox,
+   then Patchright), each tried in order.
 3. Still walled, or no browser installed: task poisoned with its reason noted.
 
 ## Layout

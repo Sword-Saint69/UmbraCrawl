@@ -27,6 +27,30 @@ TRANSIENT_MARKS = ("timed out", "timeout", "connection reset",
 
 MAX_TRANSIENT_TRIES = 4
 
+# canonical (Chrome HTTP/2) header names sent after user-agent; used to
+# insert a default UA at its real wire position instead of prepending it
+_AFTER_UA = ("accept", "accept-encoding", "accept-language", "sec-fetch-dest",
+             "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user", "cookie")
+
+
+def merge_headers(headers: dict | None = None) -> dict:
+    """Headers actually transmitted. A caller-supplied UA wins and keeps its
+    position; the default UA is inserted at its canonical slot (after the
+    sec-ch-* / upgrade-insecure-requests group, before accept)."""
+    merged = dict(headers or {})
+    if any(k.lower() == "user-agent" for k in merged):
+        return merged
+    out: dict = {}
+    placed = False
+    for k, v in merged.items():
+        if not placed and k.lower() in _AFTER_UA:
+            out["User-Agent"] = UA
+            placed = True
+        out[k] = v
+    if not placed:
+        out["User-Agent"] = UA
+    return out
+
 
 def is_transient(exc: Exception) -> bool:
     name = type(exc).__name__.lower()
@@ -38,7 +62,7 @@ def is_transient(exc: Exception) -> bool:
 def fetch(url: str, timeout: int = 30, cookies: dict | None = None,
           proxy: str | None = None, headers: dict | None = None) -> dict:
     t0 = time.time()
-    headers = {"User-Agent": UA, **(headers or {})}
+    headers = merge_headers(headers)
     proxies = {"http": proxy, "https": proxy} if proxy else None
     if HAVE_CREL:
         kw: dict = {"impersonate": "chrome124", "timeout": timeout,
