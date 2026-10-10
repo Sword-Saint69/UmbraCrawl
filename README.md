@@ -4,6 +4,11 @@ Local-first research crawler. You type `research a book`, it crawls the full
 result frontier and answers from a local SQLite store. 4 workers, no page cap,
 no servers. Stable release: 55 tests green, docs in `docs/`.
 
+<p align="center">
+  <video src="docs/brag.mp4" poster="docs/brag.jpg" width="720" controls muted playsinline></video>
+</p>
+<p align="center"><sub>20-second launch reel — typed prompt, frontier crawl, browser escalation chain, cited answer from the local store. Made with the <a href="https://github.com/latent-spaces/brag">/brag</a> skill.</sub></p>
+
 ## Install
 
 From the repo root:
