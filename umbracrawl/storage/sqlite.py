@@ -123,8 +123,10 @@ def pending(con: sqlite3.Connection) -> int:
 
 
 def recover(con: sqlite3.Connection) -> int:
-    """Crash recovery: stale 'leased' rows back to 'queued'."""
-    cur = con.execute("UPDATE tasks SET status='queued' WHERE status='leased'")
+    """Crash recovery: stale 'leased' rows back to 'queued' with fresh
+    budgets, so a budgeted stop never erodes never-started tasks."""
+    cur = con.execute("UPDATE tasks SET status='queued', attempts=0,"
+                      " challenges=0, note='' WHERE status='leased'")
     con.commit()
     return cur.rowcount
 
